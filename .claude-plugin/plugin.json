@@ -1,6 +1,6 @@
 {
   "name": "deck",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Delegate work from Claude Code to Codex, opencode, Antigravity and Copilot, with a live pane",
   "types": "./types/index.d.ts",
   "icon": "./.claude-plugin/icon.png"
