@@ -13,8 +13,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from deck.core import Hub, load_config  # noqa: E402
+import time  # noqa: E402
 
+from deck.core import Hub, load_config  # noqa: E402
+from deck.paths import STATE  # noqa: E402
+
+LIVE = STATE / "live"  # snapshots the Claude Code mod reads to draw its pane
 WAIT = 100  # seconds per call, under Claude Code's tool timeout
 
 TOOLS = [
@@ -42,7 +46,8 @@ TOOLS = [
 
 class Server:
     def __init__(self):
-        self.hub = Hub(load_config(), notify=lambda run: None)
+        self.dirty = True
+        self.hub = Hub(load_config(), notify=self.touch)
         self.hub.asker = self.ask
         self.cwd = os.getcwd()
         self.elicit = False
@@ -50,6 +55,40 @@ class Server:
         self.n = 0
         self.waiting: dict[int, asyncio.Future] = {}
         self.top: list = []  # runs started from Claude Code, in order
+
+    # -- live snapshot, for the mod's pane ------------------------------------------------
+    def touch(self, run=None):
+        self.dirty = True
+
+    def snapshot(self) -> dict:
+        runs = []
+        for r in sorted(self.hub.runs.values(), key=lambda r: r.rid):
+            runs.append({"id": r.rid, "label": r.label, "agent": r.agent, "status": r.status, "seconds": int(r.elapsed),
+                         "parent": r.parent.label if r.parent else None, "waiting": r.waiting, "model": r.model,
+                         "tokens": r.tokens, "cost": r.cost,
+                         "lines": [[k, t[:240]] for k, t in r.lines[-12:] if k != "info"]})
+        usage = {a: {"note": u.note, "windows": [{"label": w.label, "used": w.used, "resetsAt": w.resets_at}
+                                                  for w in u.windows]} for a, u in self.hub.usage.data.items()}
+        return {"pid": os.getpid(), "cwd": self.cwd, "updated": time.time(), "runs": runs, "usage": usage}
+
+    async def publish(self):
+        LIVE.mkdir(parents=True, exist_ok=True)
+        path = LIVE / f"{os.getpid()}.json"
+        asyncio.create_task(self.hub.refresh_usage())  # codex and agy limits are free to read
+        n = 0
+        try:
+            while True:
+                if self.dirty or any(r.live for r in self.hub.runs.values()) or n % 5 == 0:
+                    self.dirty = False
+                    tmp = path.with_suffix(".tmp")
+                    tmp.write_text(json.dumps(self.snapshot()))
+                    tmp.replace(path)  # the mod never reads half a file
+                n += 1
+                if n % 300 == 0:
+                    asyncio.create_task(self.hub.refresh_usage())
+                await asyncio.sleep(1)
+        finally:
+            path.unlink(missing_ok=True)
 
     # -- wire -----------------------------------------------------------------------------
     def send(self, msg: dict):
@@ -161,6 +200,7 @@ class Server:
                 self.send({"id": mid, "error": {"code": -32603, "message": f"{type(e).__name__}: {e}"}})
 
     async def run(self):
+        publisher = asyncio.create_task(self.publish())
         await self.hub.serve()  # unix socket: deck-delegate and the shell shims call back into it
         loop = asyncio.get_running_loop()
         reader = asyncio.StreamReader(limit=1 << 24)
@@ -183,6 +223,8 @@ class Server:
                 t.add_done_callback(tasks.discard)
         for r in list(self.top):
             self.hub.kill(r)
+        publisher.cancel()
+        await asyncio.gather(publisher, return_exceptions=True)
         self.hub.close()
 
 

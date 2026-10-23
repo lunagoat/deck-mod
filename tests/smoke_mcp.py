@@ -68,8 +68,15 @@ text, _ = tool("wait", id=rid)
 check("permission asked via elicitation", len(asked) == 1 and "rm -rf build" in asked[0], str(asked))
 check("allowed answer reaches the agent", "ALLOWED" in text, text)
 check("poll shows both", tool("poll")[0].count("fake") >= 2)
+import time  # noqa: E402
+time.sleep(1.5)
+snaps = list((_env.BASE / "state" / "deck" / "live").glob("*.json"))
+snap = json.loads(snaps[0].read_text()) if snaps else {}
+check("live snapshot lists the runs for the pane", len(snap.get("runs", [])) == 2 and snap.get("cwd") == str(work), str(snap)[:200])
+check("snapshot carries output lines", any(r["lines"] for r in snap.get("runs", [])))
 p.stdin.close()
 p.wait(5)
+check("snapshot removed on exit", not list((_env.BASE / "state" / "deck" / "live").glob("*.json")))
 
 p, rpc, tool, asked = session(False)
 text, _ = tool("delegate", agent="fake", prompt="REQUEST-PERMISSION", wait=True)
