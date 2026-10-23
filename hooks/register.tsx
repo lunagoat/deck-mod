@@ -59,7 +59,8 @@ function summary(runs: RunRow[]): string | undefined {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'deck', description: 'Show the deck pane: delegates and agent usage' })
+    await $.command.register({ name: 'deck', description: 'Show the deck panes: delegates, usage, and settings' })
+    await $.command.register({ name: 'deck-settings', description: 'Pick each agent\'s model and effort with the keyboard' })
 
     const home = (await $.env.get('HOME')) ?? ''
     const state = (await $.env.get('XDG_STATE_HOME')) ?? `${home}/.local/state`
@@ -140,6 +141,12 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // The Settings tab alone, holding the keyboard: Tab walks the fields, arrows and Enter pick, Esc gives it back.
+  on('command.run', { command: 'deck-settings' }, async $ => {
+    await $.ui.open({ id: SETTINGS, title: 'Settings', focus: true, closeOnEscape: true })
+    return { text: 'Settings: Tab moves between fields, ↑/↓ and Enter choose, Esc returns to the prompt.' }
+  })
+
   on('command.run', { command: 'deck' }, async $ => {
     await $.ui.open({ id: PANE, title: 'Deck' })
     const snap = await read($, snapshot)
@@ -180,13 +187,14 @@ export const register: Register = on => {
       if (agents.length === 0) return <Text dimColor>No agents found yet (the deck server starts with the session).</Text>
       return (
         <Box flexDirection="column">
-          <Text dimColor>Applies from each agent's next run. Blank / default leaves the choice to the agent.</Text>
-          {agents.map(([name, a]) => (
+          <Text dimColor>Tab / Shift+Tab: next field · ↑ ↓ and Enter: choose · Esc: back to the prompt. Applies from each agent's next run.</Text>
+          {agents.map(([name, a], i) => (
             <Box flexDirection="column" marginTop={1}>
               <Text weight="bold">{name}</Text>
               {a.models.length > 0 ? (
                 <Select
                   key={`model-${name}`}
+                  autoFocus={i === 0 ? true : undefined}
                   label="model "
                   value={a.model}
                   options={[{ value: '', label: '(default)' }, ...(a.model && !a.models.some(m => m[0] === a.model) ? [{ value: a.model }] : []),
@@ -196,6 +204,7 @@ export const register: Register = on => {
               ) : (
                 <Input
                   key={`model-${name}`}
+                  autoFocus={i === 0 ? true : undefined}
                   label="model "
                   value={a.model}
                   placeholder="(default) type an id, Enter saves"
