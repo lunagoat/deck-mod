@@ -46,7 +46,7 @@ def state_dirs(agent: str, names: tuple[str, ...] = ()) -> list[str]:
 
 
 def wrap(cmd: list[str], env: dict, cwd: str, root: str | None, agent: str,
-         names: tuple[str, ...] = ()) -> tuple[list[str], dict]:
+         names: tuple[str, ...] = (), guard: bool = False) -> tuple[list[str], dict]:
     if not shutil.which("bwrap"):
         raise RuntimeError(f"bubblewrap (bwrap) isn't installed, so deck won't run {agent} unfenced")
     home = Path.home()
@@ -58,5 +58,7 @@ def wrap(cmd: list[str], env: dict, cwd: str, root: str | None, agent: str,
             "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"]
     for path in dict.fromkeys(writable):  # after /tmp, so a folder under /tmp stays visible
         args += ["--bind-try", path, path]
-    env = {**env, "PATH": f"{SHIMS}{os.pathsep}{env.get('PATH', '')}", "DECK_FENCED": "1"}
+    env = {**env, "DECK_FENCED": "1"}
+    if guard:  # optional: ask before rm & co, on top of whatever the agent itself asks
+        env["PATH"] = f"{SHIMS}{os.pathsep}{env.get('PATH', '')}"
     return [*args, "--", *cmd], env

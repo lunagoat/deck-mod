@@ -29,6 +29,7 @@ DEFAULT_CONFIG = {
     "rules": [],                   # optional: {match = "regex", agents = ["codex"]}
     "max_delegations": 8,          # per task, across all agents
     "only": ["codex", "opencode", "agy", "copilot"],  # agents offered as delegates
+    "rm_guard": False,       # true: shims ask before rm & co for fenced agents; false: trust each agent's own asking
     "max_depth": 2,                # a delegate may delegate once more, no deeper
 }
 DELEGATE = Path(__file__).resolve().parent.parent / "bin" / "deck-delegate"
@@ -625,7 +626,8 @@ class Hub:
                 model_args = ad.acp_args(run.model)  # a model it only takes on the command line
                 argv = [self.exe(run.agent), *ad.acp, *model_args]
                 if ad.sandboxed:  # a backstop for agents whose own settings don't ask (opencode's default doesn't)
-                    argv, env = sandbox.wrap(argv, env, run.cwd, t.root, ad.name, (ad.binary,))
+                    argv, env = sandbox.wrap(argv, env, run.cwd, t.root, ad.name, (ad.binary,),
+                                              guard=self.cfg["rm_guard"])
                 rc = await acp.drive(self, run, ad.with_preamble(prompt, self.preamble(run), session), session,
                                      argv=argv, model="" if model_args else run.model, effort=run.effort, plan=run.plan,
                                      cwd=run.cwd, env=env, apply=apply, images=images)
@@ -642,7 +644,8 @@ class Hub:
                     payload = (json.dumps({"type": "user", "message": {"role": "user", "content": [
                         {"type": "text", "text": str(prompt)}, *[im.claude() for im in images]]}}) + "\n").encode()
                 if ad.sandboxed:  # can't ask for itself: fence it in and put a guard in front of rm & co
-                    cmd, env = sandbox.wrap(cmd, env, run.cwd, t.root, ad.name, (ad.binary,))
+                    cmd, env = sandbox.wrap(cmd, env, run.cwd, t.root, ad.name, (ad.binary,),
+                                              guard=self.cfg["rm_guard"])
                 run.proc = await asyncio.create_subprocess_exec(
                     *cmd, cwd=run.cwd, env=env, stdin=asyncio.subprocess.PIPE if payload else asyncio.subprocess.DEVNULL,
                     stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, limit=1 << 24)
