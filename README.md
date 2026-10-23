@@ -4,7 +4,11 @@ Delegate work from Claude Code to Codex, opencode, Antigravity (`agy`) and Copil
 beside the conversation. A rewrite of [deck](https://github.com/lunagoat/deck) as a Claude Code plugin: Claude Code
 is the primary, deck's adapters run the others.
 
-> **Experimental.** Tested with Codex, agy and Copilot in real sessions; opencode follows the same path but is less exercised.
+> **⚠️ Vibecoded.** This plugin was written almost entirely by an AI coding agent (Claude), steered by a human who
+> tested it by hand. Nobody has audited the code. It runs other agents that can edit files and run commands on your
+> machine, so read what it does before you trust it. Experimental, Linux only, and expect rough edges.
+>
+> Tested in real sessions with Codex, agy and Copilot; opencode follows the same path but is less exercised.
 
 ## Install
 
