@@ -278,7 +278,7 @@ ACP_KNOWN = {
     "cline": ("cline", ["--acp"], "#22c55e"),
     "kiro": ("kiro-cli", ["acp"], "#9333ea"),
     "goose": ("goose", ["acp"], "#f59e0b"),
-    "kilo": ("kilo", ["acp"], "#eab308"),
+    "kilo": ("kilo|kilocode", ["acp"], "#eab308"),
     "auggie": ("auggie", ["--acp"], "#06b6d4"),
     "vibe": ("vibe-acp", [], "#f97316"),
     "junie": ("junie", ["--acp=true"], "#ec4899"),

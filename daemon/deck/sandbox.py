@@ -30,6 +30,11 @@ STATE = {
     "qwen": [".qwen"],
     "cline": [".cline"],
     "kiro": [".kiro", ".local/share/kiro-cli"],
+    "goose": [".config/goose", ".local/share/goose", ".local/state/goose", ".cache/goose"],
+    "kilo": [".kilo", ".config/kilo", ".local/share/kilo", ".local/state/kilo", ".cache/kilo", ".kilocode"],
+    "auggie": [".augment"],  # not .auggie, which is what the name-based guess would allow
+    "vibe": [".vibe"],
+    "junie": [".junie", ".cache/JetBrains", ".cache/junie"],
 }
 
 
@@ -69,6 +74,8 @@ def wrap(cmd: list[str], env: dict, cwd: str, root: str | None, agent: str,
     for path in dict.fromkeys(writable):  # after /tmp, so a folder under /tmp stays visible
         args += ["--bind-try", path, path]
     env = {**env, "DECK_FENCED": "1"}
+    if agent == "goose":  # without a D-Bus secret service it would wait on the OS keyring forever
+        env["GOOSE_DISABLE_KEYRING"] = "1"
     if guard:  # optional: ask before rm & co, on top of whatever the agent itself asks
         env["PATH"] = f"{SHIMS}{os.pathsep}{env.get('PATH', '')}"
     return [*args, "--", *cmd], env
