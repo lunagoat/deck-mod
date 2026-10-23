@@ -64,7 +64,7 @@ class Server:
         runs = []
         for r in sorted(self.hub.runs.values(), key=lambda r: r.rid):
             runs.append({"id": r.rid, "label": r.label, "agent": r.agent, "status": r.status, "seconds": int(r.elapsed),
-                         "parent": r.parent.label if r.parent else None, "waiting": r.waiting, "model": r.model,
+                         "parent": r.parent.label if r.parent else None, "top": r in self.top, "reported": r.reported, "waiting": r.waiting, "model": r.model,
                          "tokens": r.tokens, "cost": r.cost,
                          "lines": [[k, t[:240]] for k, t in r.lines[-80:] if k != "info"]})
         usage = {a: {"note": u.note, "windows": [{"label": w.label, "used": w.used, "resetsAt": w.resets_at}

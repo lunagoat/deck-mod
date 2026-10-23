@@ -6,6 +6,8 @@ export type RunRow = {
   status: string
   seconds: number
   parent: string | null
+  top: boolean // started from Claude Code itself, so Claude is who waits for it
+  reported: boolean // Claude has already been handed its result
   waiting: string
   model: string
   tokens: number | null

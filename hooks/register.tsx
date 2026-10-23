@@ -5,6 +5,8 @@ import type { RunRow, Snapshot } from '../types'
 
 const PANE = 'deck'
 const RUN = 'deck-run-' // one tab per delegate: deck-run-<id>
+const SETTLE_TICKS = 3 // seconds a finished delegate sits unread before Claude is woken: batches, and lets a `wait` win
+const MAX_WAKES = 10 // per session, so Claude and its delegates can't wake each other forever
 const FRESH_MS = 15_000 // the MCP server rewrites its snapshot every second or so
 const snapshot = atom({ plugin: 'deck', key: 'snapshot' } as const, null)
 
@@ -42,6 +44,9 @@ export const register: Register = on => {
     let opened = false
     let hinted = false
     const tabs = new Set<number>() // delegates that already got a tab; a tab the person closed stays closed
+    const waiting = new Map<number, number>() // finished, unread delegate id -> ticks seen so
+    const woken = new Set<number>()
+    let wakes = 0
     const seen = new Map<number, string>() // run id -> last status, to toast the changes
 
     const tick = async () => {
@@ -63,6 +68,20 @@ export const register: Register = on => {
         const before = seen.get(r.id)
         seen.set(r.id, r.status)
         if (before && before !== r.status && r.status !== 'running') void $.ui.toast(`${r.label} ${r.status}`)
+      }
+      const unread = best.runs.filter(r => r.top && !r.reported && !woken.has(r.id) && !['running', 'queued'].includes(r.status))
+      for (const id of [...waiting.keys()]) if (!unread.some(r => r.id === id)) waiting.delete(id)
+      for (const r of unread) waiting.set(r.id, (waiting.get(r.id) ?? 0) + 1)
+      if (unread.length > 0 && wakes < MAX_WAKES && unread.every(r => (waiting.get(r.id) ?? 0) >= SETTLE_TICKS)) {
+        wakes++
+        for (const r of unread) woken.add(r.id)
+        const still = best.runs.filter(r => r.top && ['running', 'queued'].includes(r.status)).map(r => r.label)
+        const text =
+          `[deck] ${unread.map(r => `${r.label} (${r.status})`).join(', ')} finished. ` +
+          'Call the deck `poll` tool to read the result' + (unread.length > 1 ? 's' : '') + ' and carry on with the task. ' +
+          (still.length ? `Still running: ${still.join(', ')}. ` : '') +
+          'If you have already read these, ignore this message.'
+        void $.prompt.submit({ text })
       }
       if (!opened && best.runs.length > 0) {
         opened = true
