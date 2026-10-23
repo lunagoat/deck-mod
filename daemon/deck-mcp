@@ -16,6 +16,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import time  # noqa: E402
 
 from deck.core import Hub, load_config  # noqa: E402
+from deck.adapters import EFFORTS  # noqa: E402
+from deck.models import list_models  # noqa: E402
 from deck.paths import STATE  # noqa: E402
 
 LIVE = STATE / "live"  # snapshots the Claude Code mod reads to draw its pane
@@ -53,6 +55,7 @@ class Server:
         self.out = sys.stdout
         self.n = 0
         self.waiting: dict[int, asyncio.Future] = {}
+        self.model_lists: dict[str, list] = {}  # agent -> [[id, description]] its CLI offers, filled in the background
         self.top: list = []  # runs started from Claude Code, in order
 
     # -- live snapshot, for the mod's pane ------------------------------------------------
@@ -63,20 +66,36 @@ class Server:
         runs = []
         for r in sorted(self.hub.runs.values(), key=lambda r: r.rid):
             runs.append({"id": r.rid, "label": r.label, "agent": r.agent, "status": r.status, "seconds": int(r.elapsed),
-                         "parent": r.parent.label if r.parent else None, "top": r in self.top, "reported": r.reported, "waiting": r.waiting, "model": r.model,
+                         "effort": r.effort, "parent": r.parent.label if r.parent else None, "top": r in self.top, "reported": r.reported, "waiting": r.waiting, "model": r.model,
                          "tokens": r.tokens, "cost": r.cost,
                          "lines": [[k, t[:1500]] for k, t in r.lines[-80:] if k != "info"]})
         usage = {a: {"note": u.note, "windows": [{"label": w.label, "used": w.used, "resetsAt": w.resets_at}
                                                   for w in u.windows]} for a, u in self.hub.usage.data.items()}
-        return {"pid": os.getpid(), "ppid": os.getppid(), "cwd": self.cwd, "updated": time.time(), "runs": runs, "usage": usage}
+        agents = {n: {"model": self.hub.models.get(n, ""), "effort": self.hub.efforts.get(n, ""),
+                      "models": self.model_lists.get(n, []), "efforts": EFFORTS.get(n, [])}
+                  for n in sorted(self.hub.available())}
+        return {"pid": os.getpid(), "ppid": os.getppid(), "cwd": self.cwd, "updated": time.time(), "runs": runs,
+                "usage": usage, "agents": agents}
+
+    async def load_models(self):
+        for n in sorted(self.hub.available()):
+            try:
+                self.model_lists[n] = [[m, d] for m, d in await list_models(n)]
+            except Exception:  # noqa: BLE001 - a CLI that can't list models just gets a text field
+                self.model_lists[n] = []
+            self.dirty = True
 
     async def publish(self):
         LIVE.mkdir(parents=True, exist_ok=True)
         path = LIVE / f"{os.getpid()}.json"
         asyncio.create_task(self.hub.refresh_usage())  # codex and agy limits are free to read
+        asyncio.create_task(self.load_models())
         n = 0
         try:
             while True:
+                before = (dict(self.hub.models), dict(self.hub.efforts))
+                self.hub.reload_choices()  # the settings pane writes these files
+                self.dirty = self.dirty or before != (self.hub.models, self.hub.efforts)
                 if self.dirty or any(r.live for r in self.hub.runs.values()) or n % 5 == 0:
                     self.dirty = False
                     tmp = path.with_suffix(".tmp")

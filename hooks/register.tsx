@@ -1,10 +1,13 @@
 import { atom, read, update } from 'claude-code'
-import type { Register } from 'claude-code'
+import type { EngineInterface, Register } from 'claude-code'
 
 import type { RunRow, Snapshot } from '../types'
 
 const PANE = 'deck'
 const RUN = 'deck-run-' // one tab per delegate: deck-run-<id>
+const SETTINGS = 'deck-settings'
+const MAX_MODELS = 300 // opencode alone lists hundreds; a Select needs them all to draw
+let stateDir = '' // where deck keeps models.json and efforts.json, set at session.start
 const SETTLE_TICKS = 3 // seconds a finished delegate sits unread before Claude is woken: batches, and lets a `wait` win
 const MAX_WAKES = 10 // per session, so Claude and its delegates can't wake each other forever
 const FRESH_MS = 15_000 // the MCP server rewrites its snapshot every second or so
@@ -12,6 +15,26 @@ const snapshot = atom({ plugin: 'deck', key: 'snapshot' } as const, null)
 
 const GLYPH: Record<string, string> = { running: '●', queued: '○', done: '✓', failed: '✗', killed: '■' }
 const COLOR: Record<string, string> = { running: 'cyan', done: 'green', failed: 'red', killed: 'gray', queued: 'gray' }
+
+// 'openai/gpt-5.1-codex' -> 'gpt-5.1-codex', and not so long it crowds a tab
+function short(model: string, max = 22): string {
+  const m = model.includes('/') ? model.slice(model.lastIndexOf('/') + 1) : model
+  return m.length > max ? m.slice(0, max - 1) + '…' : m
+}
+
+function tabTitle(r: RunRow): string {
+  return r.model ? `${r.label} · ${short(r.model, 18)}` : r.label
+}
+
+// The settings pane writes the same two files the server reads before each run; empty means the agent's default.
+async function choose($: EngineInterface, file: 'models' | 'efforts', agent: string, value: string) {
+  const path = `${stateDir}/deck/${file}.json`
+  let table: Record<string, string> = {}
+  try { table = JSON.parse((await $.fs.read(path)) as string) } catch { /* none yet */ }
+  if (value) table[agent] = value
+  else delete table[agent]
+  await $.fs.write(path, JSON.stringify(table, null, 1))
+}
 
 function bar(used: number, width = 10): string {
   const filled = Math.max(0, Math.min(width, Math.round(used * width)))
@@ -40,6 +63,7 @@ export const register: Register = on => {
 
     const home = (await $.env.get('HOME')) ?? ''
     const state = (await $.env.get('XDG_STATE_HOME')) ?? `${home}/.local/state`
+    stateDir = state
     const dir = `${state}/deck/live`
     // Several sessions can share a folder, each with a server numbering its delegates from 1: follow only ours,
     // the one started by this Claude Code process. If that can't be told, stay with the first snapshot picked.
@@ -100,10 +124,14 @@ export const register: Register = on => {
           void $.ui.toast('deck: run /deck to see the delegates (the terminal is too narrow to open it unasked)')
         }
       }
+      let up = new Map<string, string>()
+      try { up = new Map((await $.ui.panes()).map(p => [p.id, p.title])) } catch { /* no surface to ask */ }
       for (const r of best.runs) {
         if (!tabs.has(r.id) && opened) {
           tabs.add(r.id)
-          void $.ui.open({ id: RUN + r.id, title: r.label })
+          void $.ui.open({ id: RUN + r.id, title: tabTitle(r) })
+        } else if (up.has(RUN + r.id) && up.get(RUN + r.id) !== tabTitle(r)) {
+          void $.ui.open({ id: RUN + r.id, title: tabTitle(r) }) // the model became known: retitle the open tab
         }
       }
     }
@@ -115,8 +143,9 @@ export const register: Register = on => {
   on('command.run', { command: 'deck' }, async $ => {
     await $.ui.open({ id: PANE, title: 'Deck' })
     const snap = await read($, snapshot)
-    for (const r of snap?.runs ?? []) await $.ui.open({ id: RUN + r.id, title: r.label })
-    return { text: 'Deck pane opened.' }
+    for (const r of snap?.runs ?? []) await $.ui.open({ id: RUN + r.id, title: tabTitle(r) })
+    await $.ui.open({ id: SETTINGS, title: 'Settings' })
+    return { text: 'Deck panes opened: overview, one tab per delegate, and Settings for models and efforts.' }
   })
 
   on('ui.render', { component: 'Pane' }, async ($, e, next) => {
@@ -130,7 +159,7 @@ export const register: Register = on => {
       return (
         <Box flexDirection="column">
           <Text color={COLOR[r.status]} weight="bold">
-            {GLYPH[r.status] ?? '?'} {r.label} {r.status} {r.seconds}s{r.model ? ` · ${r.model}` : ''}
+            {GLYPH[r.status] ?? '?'} {r.label} {r.status} {r.seconds}s{r.model ? ` · ${r.model}` : ''}{r.effort ? ` · ${r.effort}` : ''}
             {r.tokens ? ` · ${r.tokens} tok` : ''}
             {r.cost ? ` · $${r.cost.toFixed(2)}` : ''}
           </Text>
@@ -140,6 +169,49 @@ export const register: Register = on => {
               {kind === 'tool' ? '$ ' : ''}
               {text}
             </Text>
+          ))}
+        </Box>
+      )
+    }
+    if (id === SETTINGS) {
+      const { Select, Input } = $.ui.resolve(e) as unknown as { Select: any; Input: any } // not on every surface
+      const snap = await read($, snapshot)
+      const agents = Object.entries(snap?.agents ?? {})
+      if (agents.length === 0) return <Text dimColor>No agents found yet (the deck server starts with the session).</Text>
+      return (
+        <Box flexDirection="column">
+          <Text dimColor>Applies from each agent's next run. Blank / default leaves the choice to the agent.</Text>
+          {agents.map(([name, a]) => (
+            <Box flexDirection="column" marginTop={1}>
+              <Text weight="bold">{name}</Text>
+              {a.models.length > 0 ? (
+                <Select
+                  key={`model-${name}`}
+                  label="model "
+                  value={a.model}
+                  options={[{ value: '', label: '(default)' }, ...(a.model && !a.models.some(m => m[0] === a.model) ? [{ value: a.model }] : []),
+                    ...a.models.slice(0, MAX_MODELS).map(([id, d]) => ({ value: id, label: d ? `${id} — ${d}` : id }))]}
+                  onSelect={(v: string) => void choose($, 'models', name, v)}
+                />
+              ) : (
+                <Input
+                  key={`model-${name}`}
+                  label="model "
+                  value={a.model}
+                  placeholder="(default) type an id, Enter saves"
+                  onSubmit={(v: string) => void choose($, 'models', name, v.trim())}
+                />
+              )}
+              {a.efforts.length > 0 && (
+                <Select
+                  key={`effort-${name}`}
+                  label="effort "
+                  value={a.effort}
+                  options={[{ value: '', label: '(default)' }, ...a.efforts.map(x => ({ value: x }))]}
+                  onSelect={(v: string) => void choose($, 'efforts', name, v)}
+                />
+              )}
+            </Box>
           ))}
         </Box>
       )
@@ -166,7 +238,7 @@ export const register: Register = on => {
           <Box flexDirection="column" marginTop={1}>
             <Text color={COLOR[r.status]} weight="bold">
               {r.parent ? '  ↳ ' : ''}
-              {GLYPH[r.status] ?? '?'} {r.label} {r.status} {r.seconds}s
+              {GLYPH[r.status] ?? '?'} {r.label}{r.model ? ` (${short(r.model, 28)}${r.effort ? ` · ${r.effort}` : ''})` : ''} {r.status} {r.seconds}s
               {r.tokens ? ` · ${r.tokens} tok` : ''}
               {r.cost ? ` · $${r.cost.toFixed(2)}` : ''}
             </Text>

@@ -70,3 +70,38 @@ test('a second server in the same folder is ignored', async ($, on) => {
   expect(status.some(s => s?.includes('intruder'))).toBe(false)
   expect(status.some(s => s?.includes('codex'))).toBe(true)
 })
+
+test('the settings pane lists each agent and saves a model and an effort', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000_000 })
+  mock.env(on, { HOME: '/h', XDG_STATE_HOME: '/s' })
+  on('command.register', () => ({ value: { command: 'deck' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.panes', () => ({ value: [] }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('process.run', () => ({ value: { exitCode: 0, stdout: '42\n', stderr: '' } }))
+  on('ui.status', () => ({ value: undefined }))
+  on('ui.toast', () => ({ value: undefined }))
+  const snap = { pid: 1, ppid: 42, cwd: '/w', updated: 0, runs: [], usage: {}, agents: {
+    codex: { model: '', effort: '', models: [['gpt-a', 'A'], ['gpt-b', 'B']], efforts: ['low', 'high'] },
+    copilot: { model: '', effort: '', models: [], efforts: [] } } }
+  on('fs.list', () => ({ value: [{ name: '1.json', kind: 'file', size: 1, mtimeMs: 0, isLink: false }] }))
+  const written: Record<string, string> = {}
+  on('fs.read', (_, e) => e.path.endsWith('1.json')
+    ? { value: JSON.stringify({ ...snap, updated: clock.now() / 1000 }) }
+    : { value: written[e.path] ?? '{}' })
+  on('fs.write', (_, e) => { written[e.path] = e.text; return { value: undefined } })
+
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await clock.advance(2000)
+
+  const ui = await $.ui.mount({ plugin: 'deck', component: 'Pane', requestId: 'deck-settings', surface: 'terminal',
+    props: { title: 'Settings', isFocused: true, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} } })
+  expect(await ui.find({ key: 'model-codex' })).toBeTruthy()
+  expect(await ui.find({ key: 'model-copilot' })).toBeTruthy() // no model list: a text field
+  await ui.select({ key: 'model-codex', value: 'gpt-b' })
+  await ui.select({ key: 'effort-codex', value: 'high' })
+  await ui.input({ key: 'model-copilot', text: 'gpt-5' })
+  await ui.unmount()
+  expect(JSON.parse(written['/s/deck/models.json'])).toEqual({ codex: 'gpt-b', copilot: 'gpt-5' })
+  expect(JSON.parse(written['/s/deck/efforts.json'])).toEqual({ codex: 'high' })
+})

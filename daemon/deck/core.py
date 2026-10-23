@@ -230,6 +230,10 @@ class Hub:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(table, indent=1))
 
+    def reload_choices(self):
+        """The mod's settings pane writes models.json / efforts.json: pick up its changes before the next run."""
+        self.models, self.efforts = self._load(MODELS_FILE), self._load(EFFORTS_FILE)
+
     def set_model(self, agent: str, model: str | None):
         self._set(self.models, MODELS_FILE, agent, model)
 
@@ -565,6 +569,7 @@ class Hub:
         ad: Adapter = make_adapters()[run.agent]
         run.status, run.started, run.ended = "running", time.time(), 0.0
         run.summary = ""
+        self.reload_choices()
         run.model = self.models.get(run.agent, "")
         run.effort = self.efforts.get(run.agent, "")
         if session is None:
