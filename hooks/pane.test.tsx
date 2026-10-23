@@ -98,6 +98,10 @@ test('the settings pane lists each agent and saves a model and an effort', async
     props: { title: 'Settings', isFocused: true, bodyColumns: 80, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} } })
   expect(await ui.find({ key: 'model-codex' })).toBeTruthy()
   expect(await ui.find({ key: 'model-copilot' })).toBeTruthy() // no model list: a text field
+  await ui.input({ key: 'filter', text: 'gpt-b' })
+  const opts = (await ui.find({ key: 'model-codex' }))
+  expect(JSON.stringify(opts)).toContain('gpt-b')
+  expect(JSON.stringify(opts)).not.toContain('gpt-a')
   await ui.select({ key: 'model-codex', value: 'gpt-b' })
   await ui.select({ key: 'effort-codex', value: 'high' })
   await ui.input({ key: 'model-copilot', text: 'gpt-5' })

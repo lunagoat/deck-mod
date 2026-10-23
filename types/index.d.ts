@@ -29,6 +29,6 @@ export type Snapshot = {
 
 declare module 'claude-code' {
   interface PluginState {
-    deck: { snapshot: Snapshot | null }
+    deck: { snapshot: Snapshot | null; filter: string }
   }
 }

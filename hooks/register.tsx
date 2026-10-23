@@ -12,6 +12,7 @@ const SETTLE_TICKS = 3 // seconds a finished delegate sits unread before Claude 
 const MAX_WAKES = 10 // per session, so Claude and its delegates can't wake each other forever
 const FRESH_MS = 15_000 // the MCP server rewrites its snapshot every second or so
 const snapshot = atom({ plugin: 'deck', key: 'snapshot' } as const, null)
+const filter = atom({ plugin: 'deck', key: 'filter' } as const, '') // narrows every model picker in Settings
 
 const GLYPH: Record<string, string> = { running: '●', queued: '○', done: '✓', failed: '✗', killed: '■' }
 const COLOR: Record<string, string> = { running: 'cyan', done: 'green', failed: 'red', killed: 'gray', queued: 'gray' }
@@ -184,27 +185,42 @@ export const register: Register = on => {
       const { Select, Input } = $.ui.resolve(e) as unknown as { Select: any; Input: any } // not on every surface
       const snap = await read($, snapshot)
       const agents = Object.entries(snap?.agents ?? {})
+      const typed = (await read($, filter)) ?? ''
+      const needle = typed.trim().toLowerCase()
+      const matches = (m: [string, string]) => !needle || `${m[0]} ${m[1]}`.toLowerCase().includes(needle)
       if (agents.length === 0) return <Text dimColor>No agents found yet (the deck server starts with the session).</Text>
       return (
         <Box flexDirection="column">
           <Text dimColor>Tab / Shift+Tab: next field · ↑ ↓ and Enter: choose · Esc: back to the prompt. Applies from each agent's next run.</Text>
-          {agents.map(([name, a], i) => (
+          <Input
+            key="filter"
+            autoFocus
+            label="filter models "
+            value={typed}
+            placeholder="type to narrow every model list"
+            submitLabel="keep"
+            onInput={(v: string) => void update($, filter, () => v)}
+            onSubmit={(v: string) => void update($, filter, () => v)}
+          />
+          {agents.map(([name, a]) => (
             <Box flexDirection="column" marginTop={1}>
               <Text weight="bold">{name}</Text>
               {a.models.length > 0 ? (
                 <Select
                   key={`model-${name}`}
-                  autoFocus={i === 0 ? true : undefined}
                   label="model "
                   value={a.model}
-                  options={[{ value: '', label: '(default)' }, ...(a.model && !a.models.some(m => m[0] === a.model) ? [{ value: a.model }] : []),
-                    ...a.models.slice(0, MAX_MODELS).map(([id, d]) => ({ value: id, label: d ? `${id} — ${d}` : id }))]}
+                  options={[
+                    { value: '', label: '(default)' },
+                    ...(a.model ? [{ value: a.model }] : []), // the current choice stays pickable whatever the filter says
+                    ...a.models.filter(m => m[0] !== a.model && matches(m)).slice(0, MAX_MODELS)
+                      .map(([id, d]) => ({ value: id, label: d ? `${id} — ${d}` : id })),
+                  ]}
                   onSelect={(v: string) => void choose($, 'models', name, v)}
                 />
               ) : (
                 <Input
                   key={`model-${name}`}
-                  autoFocus={i === 0 ? true : undefined}
                   label="model "
                   value={a.model}
                   placeholder="(default) type an id, Enter saves"
