@@ -54,7 +54,7 @@ def session(elicit, answer=None):
     return p, rpc, tool, asked
 
 
-p, rpc, tool, asked = session(True, {"action": "accept", "content": {"decision": "allow"}})
+p, rpc, tool, asked = session(True, {"action": "accept", "content": {}})
 names = [t["name"] for t in rpc("tools/list")["result"]["tools"]]
 check("tools listed", {"delegate", "wait", "poll", "reply", "stop", "agents"} <= set(names), str(names))
 check("agents lists the fake", tool("agents")[0].startswith("fake"))

@@ -68,17 +68,16 @@ class Server:
         if not self.elicit:
             return "deny"
         what = f"{run.label} wants to use {tool}: " + (inp.get("command") or json.dumps(inp))[:300]
-        choices = ["allow", "always", "deny"] if always_key else ["allow", "deny"]
+        props = {"always": {"type": "boolean", "default": False, "title": "Always allow this kind of action for this run"}}
         try:
             r = await self.request("elicitation/create", {
-                "message": what,
-                "requestedSchema": {"type": "object", "properties": {
-                    "decision": {"type": "string", "enum": choices, "title": "Decision"}}, "required": ["decision"]}})
+                "message": what + "\n\nAccept to allow, Decline to deny.",
+                "requestedSchema": {"type": "object", "properties": props if always_key else {}}})
         except Exception:  # noqa: BLE001 - fail closed
             return "deny"
-        if r.get("action") == "accept" and r.get("content", {}).get("decision") in choices:
-            return r["content"]["decision"]
-        return "deny"
+        if r.get("action") != "accept":
+            return "deny"
+        return "always" if always_key and r.get("content", {}).get("always") else "allow"
 
     # -- tools ----------------------------------------------------------------------------
     def row(self, r) -> str:
