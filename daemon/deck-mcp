@@ -155,7 +155,7 @@ class Server:
             self.top.append(r)
             if a.get("wait"):
                 return await self.wait_for(r)
-            return f"started {r.label} (id={r.rid}). Keep working; `poll` shows progress, `wait` blocks for the answer."
+            return f"started {r.label} (id={r.rid}). Keep working: you'll get a message when it finishes, so there's no need to poll. `wait` blocks for the answer if you need it now."
         if name == "wait":
             return await self.wait_for(self.find(a["id"]))
         if name == "poll":
