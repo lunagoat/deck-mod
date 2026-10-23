@@ -28,8 +28,8 @@ function summary(runs: RunRow[]): string | undefined {
   const live = runs.filter(r => r.status === 'running' || r.status === 'queued')
   const tail = asking ? ` · ${asking} waiting for you` : ''
   return live.length
-    ? `deck: ${live.map(r => r.label).join(', ')} running${tail}`
-    : `deck: ${runs.length} delegate${runs.length > 1 ? 's' : ''} done${tail}`
+    ? `${live.map(r => r.label).join(', ')} running${tail}`
+    : `${runs.length} delegate${runs.length > 1 ? 's' : ''} done${tail}`
 }
 
 export const register: Register = on => {
