@@ -66,7 +66,7 @@ class Server:
             runs.append({"id": r.rid, "label": r.label, "agent": r.agent, "status": r.status, "seconds": int(r.elapsed),
                          "parent": r.parent.label if r.parent else None, "waiting": r.waiting, "model": r.model,
                          "tokens": r.tokens, "cost": r.cost,
-                         "lines": [[k, t[:240]] for k, t in r.lines[-12:] if k != "info"]})
+                         "lines": [[k, t[:240]] for k, t in r.lines[-80:] if k != "info"]})
         usage = {a: {"note": u.note, "windows": [{"label": w.label, "used": w.used, "resetsAt": w.resets_at}
                                                   for w in u.windows]} for a, u in self.hub.usage.data.items()}
         return {"pid": os.getpid(), "cwd": self.cwd, "updated": time.time(), "runs": runs, "usage": usage}

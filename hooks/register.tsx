@@ -4,6 +4,7 @@ import type { Register } from 'claude-code'
 import type { RunRow, Snapshot } from '../types'
 
 const PANE = 'deck'
+const RUN = 'deck-run-' // one tab per delegate: deck-run-<id>
 const FRESH_MS = 15_000 // the MCP server rewrites its snapshot every second or so
 const snapshot = atom({ plugin: 'deck', key: 'snapshot' } as const, null)
 
@@ -39,6 +40,8 @@ export const register: Register = on => {
     const state = (await $.env.get('XDG_STATE_HOME')) ?? `${home}/.local/state`
     const dir = `${state}/deck/live`
     let opened = false
+    let hinted = false
+    const tabs = new Set<number>() // delegates that already got a tab; a tab the person closed stays closed
     const seen = new Map<number, string>() // run id -> last status, to toast the changes
 
     const tick = async () => {
@@ -63,7 +66,17 @@ export const register: Register = on => {
       }
       if (!opened && best.runs.length > 0) {
         opened = true
-        void $.ui.open({ id: PANE, title: 'Deck' })
+        const shown = await $.ui.open({ id: PANE, title: 'Deck' })
+        if (!shown.isPlaced && !hinted) {
+          hinted = true // unasked panes need a wide terminal; the command is always placed
+          void $.ui.toast('deck: run /deck to see the delegates (the terminal is too narrow to open it unasked)')
+        }
+      }
+      for (const r of best.runs) {
+        if (!tabs.has(r.id) && opened) {
+          tabs.add(r.id)
+          void $.ui.open({ id: RUN + r.id, title: r.label })
+        }
       }
     }
     $.clock.every(1000, () => void tick())
@@ -73,11 +86,37 @@ export const register: Register = on => {
 
   on('command.run', { command: 'deck' }, async $ => {
     await $.ui.open({ id: PANE, title: 'Deck' })
+    const snap = await read($, snapshot)
+    for (const r of snap?.runs ?? []) await $.ui.open({ id: RUN + r.id, title: r.label })
     return { text: 'Deck pane opened.' }
   })
 
-  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+  on('ui.render', { component: 'Pane' }, async ($, e, next) => {
     const { Box, Text } = $.ui.resolve(e)
+    const id = e.requestId ?? ''
+    if (id.startsWith(RUN)) {
+      const snap = await read($, snapshot)
+      const r = snap?.runs.find(x => x.id === Number(id.slice(RUN.length)))
+      if (!r) return <Text dimColor>This delegate is gone.</Text>
+      const room = Math.max(1, (e.viewport?.rows ?? 30) - 4)
+      return (
+        <Box flexDirection="column">
+          <Text color={COLOR[r.status]} weight="bold">
+            {GLYPH[r.status] ?? '?'} {r.label} {r.status} {r.seconds}s{r.model ? ` · ${r.model}` : ''}
+            {r.tokens ? ` · ${r.tokens} tok` : ''}
+            {r.cost ? ` · $${r.cost.toFixed(2)}` : ''}
+          </Text>
+          {r.waiting && <Text color="yellow">⚠ waiting for your approval: {r.waiting}</Text>}
+          {r.lines.slice(-room).map(([kind, text]) => (
+            <Text dimColor={kind !== 'text'}>
+              {kind === 'tool' ? '$ ' : ''}
+              {text}
+            </Text>
+          ))}
+        </Box>
+      )
+    }
+    if (id !== PANE) return next(e)
     const snap = await read($, snapshot)
     if (!snap || snap.runs.length === 0) {
       return <Text dimColor>No delegates yet. Ask Claude to delegate to codex, opencode, agy or copilot.</Text>
