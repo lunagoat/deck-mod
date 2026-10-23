@@ -41,6 +41,13 @@ export const register: Register = on => {
     const home = (await $.env.get('HOME')) ?? ''
     const state = (await $.env.get('XDG_STATE_HOME')) ?? `${home}/.local/state`
     const dir = `${state}/deck/live`
+    // Several sessions can share a folder, each with a server numbering its delegates from 1: follow only ours,
+    // the one started by this Claude Code process. If that can't be told, stay with the first snapshot picked.
+    let ours = 0
+    try {
+      ours = Number((await $.process.run(['sh', '-c', 'echo $PPID'])).stdout.trim()) || 0
+    } catch { /* fall back to following the first snapshot we see */ }
+    let followed = 0
     let opened = false
     let hinted = false
     const tabs = new Set<number>() // delegates that already got a tab; a tab the person closed stays closed
@@ -57,10 +64,12 @@ export const register: Register = on => {
           if (!f.name.endsWith('.json')) continue
           try {
             const snap = JSON.parse(await $.fs.read(`${dir}/${f.name}`) as string) as Snapshot
-            if (snap.cwd === e.cwd && now - snap.updated * 1000 < FRESH_MS && (!best || snap.updated > best.updated)) best = snap
+            const isMine = ours ? snap.ppid === ours : !followed || snap.pid === followed
+            if (snap.cwd === e.cwd && isMine && now - snap.updated * 1000 < FRESH_MS && (!best || snap.updated > best.updated)) best = snap
           } catch { /* half-written or gone: the next tick will do */ }
         }
       } catch { /* no live folder yet */ }
+      if (best && !ours) followed = best.pid
       await update($, snapshot, () => best)
       void $.ui.status(best ? summary(best.runs) : undefined)
       if (!best) return

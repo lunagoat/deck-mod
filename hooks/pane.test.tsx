@@ -27,10 +27,11 @@ test('a finished delegate wakes Claude once, after it has sat unread for a few s
 
   const run = { id: 1, label: 'codex', agent: 'codex', status: 'done', seconds: 4, parent: null, top: true, reported: false,
     waiting: '', model: '', tokens: null, cost: null, lines: [] }
-  const file = () => JSON.stringify({ pid: 1, cwd: '/w', updated: clock.now() / 1000, runs: [run], usage: {} })
+  const file = () => JSON.stringify({ pid: 1, ppid: 42, cwd: '/w', updated: clock.now() / 1000, runs: [run], usage: {} })
   on('fs.list', () => ({ value: [{ name: '1.json', kind: 'file', size: 1, mtimeMs: 0, isLink: false }] }))
   on('fs.read', () => ({ value: file() }))
   const sent: string[] = []
+  on('process.run', () => ({ value: { exitCode: 0, stdout: '42\n', stderr: '' } }))
   on('ui.status', () => ({ value: undefined }))
   on('ui.toast', () => ({ value: undefined }))
   on('prompt.submit', (_, e) => { sent.push(e.text); return { text: e.text } })
@@ -48,4 +49,24 @@ test('a finished delegate wakes Claude once, after it has sat unread for a few s
   run.reported = true
   await clock.advance(10_000)
   expect(sent.length).toBe(1) // already read: no wake
+})
+
+test('a second server in the same folder is ignored', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000_000 })
+  mock.env(on, { HOME: '/h' })
+  on('command.register', () => ({ value: { command: 'deck' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('process.run', () => ({ value: { exitCode: 0, stdout: '42\n', stderr: '' } }))
+  const status: (string | undefined)[] = []
+  on('ui.status', (_, e) => { status.push(e.text); return { value: undefined } })
+  on('ui.toast', () => ({ value: undefined }))
+  const mk = (ppid: number, label: string) => JSON.stringify({ pid: ppid, ppid, cwd: '/w', updated: clock.now() / 1000 + 1, usage: {},
+    runs: [{ id: 1, label, agent: label, status: 'running', seconds: 1, parent: null, top: true, reported: false, waiting: '', model: '', tokens: null, cost: null, lines: [] }] })
+  on('fs.list', () => ({ value: ['a', 'b'].map(name => ({ name: name + '.json', kind: 'file', size: 1, mtimeMs: 0, isLink: false })) }))
+  on('fs.read', (_, e) => ({ value: e.path.endsWith('a.json') ? mk(42, 'codex') : mk(99, 'intruder') }))
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  await clock.advance(3000)
+  expect(status.some(s => s?.includes('intruder'))).toBe(false)
+  expect(status.some(s => s?.includes('codex'))).toBe(true)
 })

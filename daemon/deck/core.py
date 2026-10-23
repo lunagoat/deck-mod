@@ -28,7 +28,7 @@ DEFAULT_CONFIG = {
     "default_agents": ["claude"],  # every task starts here; claude delegates to the others when asked
     "rules": [],                   # optional: {match = "regex", agents = ["codex"]}
     "max_delegations": 8,          # per task, across all agents
-    "only": ["codex", "opencode", "agy", "copilot"],  # agents offered as delegates
+    "only": [],              # empty: every installed agent but claude; or list the ones to offer
     "rm_guard": False,       # true: shims ask before rm & co for fenced agents; false: trust each agent's own asking
     "max_depth": 2,                # a delegate may delegate once more, no deeper
 }
@@ -388,8 +388,8 @@ class Hub:
         return r
 
     def available(self) -> set[str]:
-        only = self.cfg.get("only")  # the plugin's primary is Claude Code itself, so Claude isn't a delegate
-        return {n for n in self.found if not only or n in only}
+        only = self.cfg.get("only")  # the plugin's primary is Claude Code itself, so Claude isn't a delegate by default
+        return {n for n in self.found if (n in only if only else n != "claude")}
 
     async def refresh_usage(self, claude: bool = False) -> str:
         """Re-read limits. codex and agy are free to ask; claude only reports them while running, so asking

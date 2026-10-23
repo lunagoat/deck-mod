@@ -1,6 +1,6 @@
 # deck for Claude Code
 
-Delegate work from Claude Code to Codex, opencode, Antigravity (`agy`) and Copilot, and watch them in a pane
+Delegate work from Claude Code to Codex, opencode, Antigravity (`agy`), Copilot and any ACP agent (Gemini CLI, Cursor, Qwen Code, Cline, Kiro, Goose, Kilo, Auggie, Vibe, Junie; untested), and watch them in a pane
 beside the conversation. A rewrite of [deck](https://github.com/lunagoat/deck) as a Claude Code plugin: Claude Code
 is the primary, deck's adapters run the others.
 
@@ -51,7 +51,7 @@ ask for what they consider risky). Codex uses its own `on-request` policy and wo
 `~/.config/deck/config.toml` (all optional):
 
 ```toml
-only = ["codex", "opencode", "agy", "copilot"]   # agents offered as delegates
+only = []                                      # empty: every installed agent except claude; or list the ones to offer
 max_delegations = 8                              # per task
 max_depth = 2                                    # a delegate may delegate once more
 rm_guard = false

@@ -17,6 +17,7 @@ export type RunRow = {
 export type UsageWindow = { label: string; used: number; resetsAt: number | null }
 export type Snapshot = {
   pid: number
+  ppid: number // the Claude Code process that started this server
   cwd: string
   updated: number
   runs: RunRow[]

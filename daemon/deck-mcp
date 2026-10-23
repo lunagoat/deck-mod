@@ -22,8 +22,7 @@ LIVE = STATE / "live"  # snapshots the Claude Code mod reads to draw its pane
 WAIT = 100  # seconds per call, under Claude Code's tool timeout
 
 TOOLS = [
-    {"name": "agents", "description": "List the coding agents available to delegate to (codex, opencode, agy, copilot) "
-     "and what each is good at.", "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "agents", "description": "List the installed coding agents available to delegate to and what each is good at.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "delegate",
      "description": "Start another coding agent on a self-contained task in the current folder. Returns an id at once; "
                     "use `wait` for the answer or keep working and `poll`. Set wait=true to block for the answer.",
@@ -69,7 +68,7 @@ class Server:
                          "lines": [[k, t[:1500]] for k, t in r.lines[-80:] if k != "info"]})
         usage = {a: {"note": u.note, "windows": [{"label": w.label, "used": w.used, "resetsAt": w.resets_at}
                                                   for w in u.windows]} for a, u in self.hub.usage.data.items()}
-        return {"pid": os.getpid(), "cwd": self.cwd, "updated": time.time(), "runs": runs, "usage": usage}
+        return {"pid": os.getpid(), "ppid": os.getppid(), "cwd": self.cwd, "updated": time.time(), "runs": runs, "usage": usage}
 
     async def publish(self):
         LIVE.mkdir(parents=True, exist_ok=True)
@@ -143,9 +142,14 @@ class Server:
     async def call(self, name: str, a: dict) -> str:
         hub = self.hub
         if name == "agents":
-            from deck.adapters import make_adapters
+            from deck.adapters import ACP_KNOWN, make_adapters
+            from deck import detect
             ads = make_adapters()
-            return "\n".join(f"{n}: {ads[n].blurb}" for n in sorted(hub.available())) or "no agents installed"
+            rows = [f"{n}: {ads[n].blurb}" + (" (untested)" if n in ACP_KNOWN else "") for n in sorted(hub.available())]
+            missing = detect.scan_unsupported(ads)
+            if missing:
+                rows.append("installed but not drivable by deck: " + ", ".join(sorted(missing)))
+            return "\n".join(rows) or "no agents installed"
         if name == "delegate":
             agent = a["agent"]
             if agent not in hub.available():
