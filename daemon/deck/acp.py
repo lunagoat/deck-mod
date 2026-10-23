@@ -160,22 +160,39 @@ async def drive(hub, run, prompt: str, session: str | None, *, argv: list[str], 
         if images and not (caps.get("promptCapabilities") or {}).get("image"):
             raise RuntimeError("this ACP agent does not advertise image input support; recover attachments with /image retry")
         base = {"cwd": cwd, "mcpServers": []}
+        auth_methods = init.get("authMethods") or []
+        authed = False
+
+        async def authed_call(method: str, params: dict) -> dict:
+            """Agents that haven't been logged in answer with an auth error: pick the first method they offer
+            (usually 'use the credentials the CLI already has') and try once more."""
+            nonlocal authed
+            try:
+                return await rpc.call(method, params)
+            except RuntimeError as e:
+                if authed or not auth_methods or "auth" not in str(e).lower():
+                    raise
+                authed = True
+                chosen = auth_methods[0]
+                apply(Ev("tool", f"(authenticating with {chosen.get('name') or chosen.get('id')})"))
+                await rpc.call("authenticate", {"methodId": chosen.get("id")})
+                return await rpc.call(method, params)
 
         info: dict = {}
         if session and caps.get("loadSession"):
             state["replaying"] = True
             try:
-                info = await rpc.call("session/load", {"sessionId": session, **base})
+                info = await authed_call("session/load", {"sessionId": session, **base})
             finally:
                 state["replaying"] = False
             sid = session
         elif session and (caps.get("sessionCapabilities") or {}).get("resume") is not None:
-            info = await rpc.call("session/resume", {"sessionId": session, **base})
+            info = await authed_call("session/resume", {"sessionId": session, **base})
             sid = session
         else:
             if session:
                 apply(Ev("error", "this agent can't resume sessions: starting a fresh one, it won't remember earlier turns"))
-            info = await rpc.call("session/new", base)
+            info = await authed_call("session/new", base)
             sid = info.get("sessionId")
         if not sid:
             raise RuntimeError("the agent didn't return a session id")
@@ -188,6 +205,9 @@ async def drive(hub, run, prompt: str, session: str | None, *, argv: list[str], 
                              or _config_option(options, id_="reasoning_effort"))):
             if want and found and _offers(found, want):
                 await rpc.call("session/set_config_option", {"sessionId": sid, "configId": found["id"], "value": want})
+            elif want and found is None and want == model and any(
+                    m.get("modelId") == want for m in (info.get("models") or {}).get("availableModels", [])):
+                await rpc.call("session/set_model", {"sessionId": sid, "modelId": want})  # the older, pre-config-option way
             elif want:
                 apply(Ev("tool", f"({found['name'] if found else 'setting'} {want!r} isn't offered by this agent)"))
         if plan:

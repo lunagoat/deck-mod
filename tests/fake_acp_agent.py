@@ -32,14 +32,29 @@ def read():
     return json.loads(line) if line else None
 
 
+AUTH = "--auth" in sys.argv          # session/new fails until `authenticate` is called
+LEGACY = "--legacy-models" in sys.argv  # models via `models`/session/set_model instead of configOptions
+
+
 def main():
+    authed = not AUTH
     while (m := read()) is not None:
         method, params, mid = m.get("method"), m.get("params") or {}, m.get("id")
         if method:
             log(method, params)
         if method == "initialize":
-            send({"id": mid, "result": {"protocolVersion": 1, "authMethods": [], "agentInfo": {"name": "fake"},
+            send({"id": mid, "result": {"protocolVersion": 1, "authMethods": [{"id": "login", "name": "Log in"}] if AUTH else [], "agentInfo": {"name": "fake"},
                                         "agentCapabilities": {"loadSession": True, "sessionCapabilities": {}}}})
+        elif method == "authenticate":
+            authed = params.get("methodId") == "login"
+            send({"id": mid, "result": {}} if authed else {"id": mid, "error": {"code": -32000, "message": "bad method"}})
+        elif method == "session/new" and not authed:
+            send({"id": mid, "error": {"code": -32000, "message": "Authentication required"}})
+        elif method == "session/new" and LEGACY:
+            send({"id": mid, "result": {"sessionId": "fake-1", "models": {"currentModelId": "a", "availableModels": [
+                {"modelId": "a", "name": "A"}, {"modelId": "b", "name": "B"}]}}})
+        elif method == "session/set_model":
+            send({"id": mid, "result": {}})
         elif method == "session/new":
             send({"id": mid, "result": {"sessionId": "fake-1", "configOptions": [
                 {"id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": "a",

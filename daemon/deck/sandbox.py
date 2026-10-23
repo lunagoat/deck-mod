@@ -24,6 +24,12 @@ STATE = {
     "agy": [".gemini"],
     "opencode": [".local/share/opencode", ".local/state/opencode", ".config/opencode", ".cache/opencode"],
     "copilot": [".copilot", ".config/github-copilot", ".cache/copilot", ".local/state/copilot"],
+    # from each CLI's docs, not from running it: see the README's note on untested agents
+    "gemini": [".gemini"],
+    "cursor": [".cursor", ".config/cursor"],
+    "qwen": [".qwen"],
+    "cline": [".cline"],
+    "kiro": [".kiro", ".local/share/kiro-cli"],
 }
 
 
@@ -53,7 +59,11 @@ def wrap(cmd: list[str], env: dict, cwd: str, root: str | None, agent: str,
     writable = [os.path.realpath(cwd)]
     if root and (common := _git_common_dir(cwd)):
         writable.append(os.path.realpath(common))
-    writable += [str(home / rel) for rel in state_dirs(agent, names)]
+    for rel in state_dirs(agent, names):
+        path = home / rel
+        if rel in STATE.get(agent, ()):  # bind-try skips a folder that isn't there yet, and a first run would then fail
+            path.mkdir(parents=True, exist_ok=True)
+        writable.append(str(path))
     args = ["bwrap", "--die-with-parent", "--new-session",
             "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"]
     for path in dict.fromkeys(writable):  # after /tmp, so a folder under /tmp stays visible

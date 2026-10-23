@@ -15,8 +15,16 @@ cfg = _env.BASE / "config" / "deck"
 cfg.mkdir(parents=True)
 work = _env.BASE / "work"
 work.mkdir()
+FAKE = f'["{sys.executable}", "{ROOT / "tests" / "fake_acp_agent.py"}"'
 (cfg / "config.toml").write_text(
-    f'only = ["fake"]\n[agents.fake]\nacp = ["{sys.executable}", "{ROOT / "tests" / "fake_acp_agent.py"}"]\nfenced = false\n')
+    f'only = ["fake", "fakeauth", "fakelegacy"]\n[agents.fake]\nacp = {FAKE}]\nfenced = false\n'
+    f'[agents.fakeauth]\nacp = {FAKE}, "--auth"]\nfenced = false\n'
+    f'[agents.fakelegacy]\nacp = {FAKE}, "--legacy-models"]\nfenced = false\n')
+
+(_env.BASE / "state" / "deck").mkdir(parents=True)
+(_env.BASE / "state" / "deck" / "models.json").write_text(json.dumps({"fakelegacy": "b"}))
+LOG = _env.BASE / "agent.log"
+os.environ["FAKE_ACP_LOG"] = str(LOG)
 
 results = []
 
@@ -74,6 +82,12 @@ snaps = list((_env.BASE / "state" / "deck" / "live").glob("*.json"))
 snap = json.loads(snaps[0].read_text()) if snaps else {}
 check("live snapshot lists the runs for the pane", len(snap.get("runs", [])) == 2 and snap.get("cwd") == str(work), str(snap)[:200])
 check("snapshot carries output lines", any(r["lines"] for r in snap.get("runs", [])))
+text, _ = tool("delegate", agent="fakeauth", prompt="hi", wait=True)
+check("auth-required agent: authenticates and retries", "[fakeauth done]" in text and "Hello world" in text, text)
+text, _ = tool("delegate", agent="fakelegacy", prompt="hi", wait=True)
+check("legacy models agent runs", "[fakelegacy done]" in text, text)
+check("model chosen through session/set_model", '"session/set_model"' in LOG.read_text() or any(
+    r["kind"] == "session/set_model" and r["payload"]["modelId"] == "b" for r in map(json.loads, LOG.read_text().splitlines())))
 p.stdin.close()
 p.wait(5)
 check("snapshot removed on exit", not list((_env.BASE / "state" / "deck" / "live").glob("*.json")))
