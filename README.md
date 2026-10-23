@@ -35,7 +35,7 @@ Ask Claude: *"delegate a review of this diff to codex"*, or *"get agy and copilo
   toast also report when delegates finish.
 - **Models and effort:** `/deck-settings` opens the **Settings** tab holding the keyboard (Tab between fields, ↑/↓ and
   Enter to choose, Esc to go back to the prompt); `/deck` opens it alongside the other tabs. It has a model picker
-  and an effort picker per agent with a model picker and an effort picker per agent
+  and an effort picker per agent
   (model lists come from each CLI where it can list them; otherwise a text field). Changes apply from the agent's
   next run and are shared by all sessions (`~/.local/state/deck/models.json`, `efforts.json`). Each delegate's tab is
   titled with its model, and the overview shows model and effort per delegate.
