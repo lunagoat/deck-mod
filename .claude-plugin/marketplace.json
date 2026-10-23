@@ -1,0 +1,12 @@
+{
+  "name": "deck",
+  "owner": {
+    "name": "lunagoat"
+  },
+  "plugins": [
+    {
+      "name": "deck",
+      "source": "./"
+    }
+  ]
+}
