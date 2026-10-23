@@ -127,7 +127,7 @@ export const register: Register = on => {
           </Text>
           {r.waiting && <Text color="yellow">⚠ waiting for your approval: {r.waiting}</Text>}
           {r.lines.slice(-room).map(([kind, text]) => (
-            <Text dimColor={kind !== 'text'}>
+            <Text wrap="wrap" dimColor={kind !== 'text'}>
               {kind === 'tool' ? '$ ' : ''}
               {text}
             </Text>
@@ -163,7 +163,7 @@ export const register: Register = on => {
             </Text>
             {r.waiting && <Text color="yellow">⚠ waiting for your approval: {r.waiting}</Text>}
             {r.lines.slice(-perRun).map(([kind, text]) => (
-              <Text dimColor={kind !== 'text'}>
+              <Text wrap="wrap" dimColor={kind !== 'text'}>
                 {r.parent ? '    ' : '  '}
                 {kind === 'tool' ? '$ ' : ''}
                 {text}
