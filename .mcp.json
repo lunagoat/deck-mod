@@ -1,0 +1,1 @@
+{ "mcpServers": { "deck": { "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/daemon/deck-mcp"] } } }

@@ -1,0 +1,191 @@
+#!/usr/bin/env python3
+"""MCP server (stdio) that runs deck's Hub in-process, so Claude Code can delegate to other coding agents.
+
+The server lives as long as the Claude Code session. Tools: agents, delegate, wait, poll, reply, stop.
+When a delegate wants to do something risky, the confirm/deny question goes to Claude Code as an MCP
+elicitation (a native dialog); a client without elicitation gets a deny, never a silent allow.
+"""
+import asyncio
+import json
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from deck.core import Hub, load_config  # noqa: E402
+
+WAIT = 100  # seconds per call, under Claude Code's tool timeout
+
+TOOLS = [
+    {"name": "agents", "description": "List the coding agents available to delegate to (codex, opencode, agy, copilot) "
+     "and what each is good at.", "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "delegate",
+     "description": "Start another coding agent on a self-contained task in the current folder. Returns an id at once; "
+                    "use `wait` for the answer or keep working and `poll`. Set wait=true to block for the answer.",
+     "inputSchema": {"type": "object", "properties": {
+         "agent": {"type": "string"}, "prompt": {"type": "string", "description": "self-contained task"},
+         "wait": {"type": "boolean", "description": "block (up to ~100 s) for the result"},
+         "plan": {"type": "boolean", "description": "agent proposes a plan and changes nothing"}},
+         "required": ["agent", "prompt"]}},
+    {"name": "wait", "description": "Wait (up to ~100 s) for a delegate and return its answer.",
+     "inputSchema": {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]}},
+    {"name": "poll", "description": "Status of every delegate; prints finished results once. Never blocks.",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "reply", "description": "Send a follow-up message to a delegate (queued if it is busy).",
+     "inputSchema": {"type": "object", "properties": {"id": {"type": "integer"}, "text": {"type": "string"}},
+                     "required": ["id", "text"]}},
+    {"name": "stop", "description": "Stop a delegate and its subagents.",
+     "inputSchema": {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]}},
+]
+
+
+class Server:
+    def __init__(self):
+        self.hub = Hub(load_config(), notify=lambda run: None)
+        self.hub.asker = self.ask
+        self.cwd = os.getcwd()
+        self.elicit = False
+        self.out = sys.stdout
+        self.n = 0
+        self.waiting: dict[int, asyncio.Future] = {}
+        self.top: list = []  # runs started from Claude Code, in order
+
+    # -- wire -----------------------------------------------------------------------------
+    def send(self, msg: dict):
+        self.out.write(json.dumps({"jsonrpc": "2.0", **msg}) + "\n")
+        self.out.flush()
+
+    async def request(self, method: str, params: dict) -> dict:
+        self.n += 1
+        fut = asyncio.get_running_loop().create_future()
+        self.waiting[self.n] = fut
+        self.send({"id": self.n, "method": method, "params": params})
+        return await fut
+
+    async def ask(self, run, tool, inp, always_key) -> str:
+        """Hub asker: a native Claude Code dialog through MCP elicitation."""
+        if not self.elicit:
+            return "deny"
+        what = f"{run.label} wants to use {tool}: " + (inp.get("command") or json.dumps(inp))[:300]
+        choices = ["allow", "always", "deny"] if always_key else ["allow", "deny"]
+        try:
+            r = await self.request("elicitation/create", {
+                "message": what,
+                "requestedSchema": {"type": "object", "properties": {
+                    "decision": {"type": "string", "enum": choices, "title": "Decision"}}, "required": ["decision"]}})
+        except Exception:  # noqa: BLE001 - fail closed
+            return "deny"
+        if r.get("action") == "accept" and r.get("content", {}).get("decision") in choices:
+            return r["content"]["decision"]
+        return "deny"
+
+    # -- tools ----------------------------------------------------------------------------
+    def row(self, r) -> str:
+        return f"#{r.rid} {r.label}: {r.status} ({int(r.elapsed)}s)" + (f" waiting for approval: {r.waiting}" if r.waiting else "")
+
+    async def finished(self, r) -> str:
+        r.reported = True
+        return f"[{r.label} {r.status}]\n{await self.hub.report(r)}"
+
+    async def wait_for(self, r) -> str:
+        deadline = asyncio.get_running_loop().time() + WAIT
+        while r.live and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.5)
+        if r.live:
+            return f"STILL RUNNING (id={r.rid}). Call wait again, or keep working and poll."
+        return await self.finished(r)
+
+    def find(self, rid: int):
+        r = self.hub.runs.get(rid)
+        if not r or r not in self.top:
+            raise ValueError(f"unknown delegate id {rid}")
+        return r
+
+    async def call(self, name: str, a: dict) -> str:
+        hub = self.hub
+        if name == "agents":
+            from deck.adapters import make_adapters
+            ads = make_adapters()
+            return "\n".join(f"{n}: {ads[n].blurb}" for n in sorted(hub.available())) or "no agents installed"
+        if name == "delegate":
+            agent = a["agent"]
+            if agent not in hub.available():
+                raise ValueError(f"{agent!r} not available; choose from {sorted(hub.available())}")
+            t = await hub.start_task(a["prompt"], [agent], self.cwd, isolate=False, plan=bool(a.get("plan")))
+            r = next(iter(t.runs.values()))
+            self.top.append(r)
+            if a.get("wait"):
+                return await self.wait_for(r)
+            return f"started {r.label} (id={r.rid}). Keep working; `poll` shows progress, `wait` blocks for the answer."
+        if name == "wait":
+            return await self.wait_for(self.find(a["id"]))
+        if name == "poll":
+            if not self.top:
+                return "no delegates yet"
+            out = []
+            for r in self.top:
+                out.append(self.row(r))
+                if not r.live and not r.reported:
+                    out.append(await self.finished(r) + "\n")
+            return "\n".join(out)
+        if name == "reply":
+            return hub.reply(self.find(a["id"]), a["text"])
+        if name == "stop":
+            return f"stopped {hub.kill(self.find(a['id']))} run(s)"
+        raise ValueError(f"unknown tool {name}")
+
+    async def handle(self, msg: dict):
+        method, mid = msg.get("method"), msg.get("id")
+        try:
+            if method == "initialize":
+                p = msg.get("params", {})
+                self.elicit = "elicitation" in p.get("capabilities", {})
+                self.send({"id": mid, "result": {
+                    "protocolVersion": p.get("protocolVersion", "2024-11-05"), "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "deck", "version": "0.1.0"}}})
+            elif method == "tools/list":
+                self.send({"id": mid, "result": {"tools": TOOLS}})
+            elif method == "tools/call":
+                p = msg["params"]
+                try:
+                    text, err = await self.call(p["name"], p.get("arguments") or {}), False
+                except (ValueError, KeyError) as e:
+                    text, err = f"deck: {e}", True
+                self.send({"id": mid, "result": {"content": [{"type": "text", "text": text}], "isError": err}})
+            elif method == "ping":
+                self.send({"id": mid, "result": {}})
+            elif mid is not None:
+                self.send({"id": mid, "error": {"code": -32601, "message": f"unknown method {method}"}})
+        except Exception as e:  # noqa: BLE001
+            if mid is not None:
+                self.send({"id": mid, "error": {"code": -32603, "message": f"{type(e).__name__}: {e}"}})
+
+    async def run(self):
+        await self.hub.serve()  # unix socket: deck-delegate and the shell shims call back into it
+        loop = asyncio.get_running_loop()
+        reader = asyncio.StreamReader(limit=1 << 24)
+        await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(reader), sys.stdin)
+        tasks = set()
+        async for line in reader:
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                continue
+            if "method" not in msg and msg.get("id") in self.waiting:  # a reply to our elicitation
+                fut = self.waiting.pop(msg["id"])
+                if "error" in msg:
+                    fut.set_exception(RuntimeError(str(msg["error"])))
+                else:
+                    fut.set_result(msg.get("result", {}))
+            elif "method" in msg:
+                t = asyncio.create_task(self.handle(msg))
+                tasks.add(t)
+                t.add_done_callback(tasks.discard)
+        for r in list(self.top):
+            self.hub.kill(r)
+        self.hub.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(Server().run())

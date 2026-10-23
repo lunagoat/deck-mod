@@ -1,0 +1,51 @@
+#!/usr/bin/env python3
+"""Stands in for rm, rmdir, shred, dd... inside deck's fence: ask deck first, then run the real one.
+
+This file is symlinked under each command's name (bin/shims/rm -> deck-shim). Outside deck (no
+DECK_SOCK) it just runs the real command, so a leaked PATH entry never breaks anything.
+"""
+import json
+import os
+import shlex
+import socket
+import sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+name = os.path.basename(sys.argv[0])
+
+
+def real_command() -> str:
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        if d and os.path.realpath(d) != HERE:
+            p = os.path.join(d, name)
+            if os.access(p, os.X_OK) and not os.path.isdir(p):
+                return p
+    sys.exit(f"{name}: real command not found")
+
+
+def allowed(command: str) -> bool:
+    try:
+        s = socket.socket(socket.AF_UNIX)
+        s.connect(os.environ["DECK_SOCK"])
+        req = {"op": "permission", "from": int(os.environ.get("DECK_RUN", 0)), "tool": "Bash",
+               "input": {"command": command}}
+        s.sendall((json.dumps(req) + "\n").encode())
+        buf = b""
+        while not buf.endswith(b"\n"):
+            chunk = s.recv(65536)
+            if not chunk:
+                break
+            buf += chunk
+        return json.loads(buf).get("behavior") == "allow"
+    except (OSError, ValueError, KeyError):
+        return False  # can't reach deck: fail closed
+
+
+real = real_command()
+args = sys.argv[1:]
+if "DECK_SOCK" not in os.environ or any(a in ("--help", "--version") for a in args):
+    os.execv(real, [name, *args])
+if allowed(shlex.join([name, *args])):
+    os.execv(real, [name, *args])
+sys.stderr.write(f"{name}: the user denied this in deck. Don't retry it; carry on without it or ask the user.\n")
+sys.exit(1)

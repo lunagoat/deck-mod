@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+"""Ask the running `deck` dashboard to run another agent.
+
+  deck-delegate <agent> <prompt...>         start it and wait (up to 100 s) for the answer
+  deck-delegate --start <agent> <prompt...> start it and return at once with an id; keep working
+  deck-delegate --poll                      how are my delegates doing? never blocks; prints finished results once
+  deck-delegate --wait <id>                 wait (up to 100 s) for that delegate and print its answer
+"""
+import json
+import os
+import socket
+import sys
+
+WAIT = 100  # seconds per call, so a short tool timeout in the caller never kills us
+
+
+def ask(sock, req):
+    sock.sendall((json.dumps(req) + "\n").encode())
+    buf = b""
+    while not buf.endswith(b"\n"):
+        chunk = sock.recv(65536)
+        if not chunk:
+            break
+        buf += chunk
+    return json.loads(buf or b"{}")
+
+
+def start(s, agent, prompt):
+    r = ask(s, {"op": "delegate", "from": int(os.environ.get("DECK_RUN", 0)), "agent": agent, "prompt": prompt})
+    if "error" in r:
+        sys.exit("deck-delegate: " + r["error"])
+    return r["id"]
+
+
+def wait(s, rid):
+    r = ask(s, {"op": "wait", "id": rid, "timeout": WAIT})
+    if "error" in r:
+        sys.exit("deck-delegate: " + r["error"])
+    if r.get("status") == "running":
+        print(f"STILL RUNNING (id={rid}). Run: deck-delegate --wait {rid}   (or keep working and use --poll)")
+    else:
+        print(f"[{r.get('agent')} {r.get('status')}]\n{r.get('result', '')}")
+
+
+def main():
+    path = os.environ.get("DECK_SOCK")
+    if not path:
+        sys.exit("deck-delegate: not running inside deck (DECK_SOCK unset)")
+    s = socket.socket(socket.AF_UNIX)
+    s.connect(path)
+    a = sys.argv[1:]
+    if a[:1] == ["--poll"]:
+        rows = ask(s, {"op": "poll", "from": int(os.environ.get("DECK_RUN", 0))}).get("delegates", [])
+        if not rows:
+            print("no delegates yet")
+        for row in rows:
+            print(f"#{row['id']} {row['agent']}: {row['status']} ({row['seconds']}s)")
+            if "result" in row:
+                print(f"--- {row['agent']} result ---\n{row['result']}\n")
+    elif a[:1] == ["--wait"] and len(a) == 2:
+        wait(s, int(a[1]))
+    elif a[:1] == ["--start"] and len(a) >= 3:
+        rid = start(s, a[1], " ".join(a[2:]))
+        print(f"started {a[1]} (id={rid}). Keep working; `deck-delegate --poll` shows progress, and deck will wake "
+              f"you with the result if you finish first.")
+    elif len(a) >= 2 and not a[0].startswith("-"):
+        wait(s, start(s, a[0], " ".join(a[1:])))
+    else:
+        sys.exit(__doc__)
+
+
+main()
